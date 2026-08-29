@@ -11,7 +11,12 @@
 set -uo pipefail
 
 OWNER="${1:?usage: verify.sh <owner> [namespace]}"
-NS="${2:-demo}"
+# `${2-}` and not `${2:-…}`: the showcase passes an EMPTY namespace (it publishes
+# straight under the owner, since the policies already declare `project: demo`).
+# `:-` would substitute a default for empty as well as unset, and the script would
+# then verify a different, possibly stale, set of images — passing green while
+# looking at the wrong thing, which is the one failure this script must not have.
+NS="${2-}"
 PREFIX="ghcr.io/${OWNER}${NS:+/$NS}"
 
 # One image per path: a copied one and a rebuilt one. The rebuild is the one that
