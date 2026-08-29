@@ -4,11 +4,13 @@ name: showcase
 # pinned tag, never copied here — and publishes the results to GHCR, so anyone
 # can verify knock's provenance stamp without a clone or a cluster.
 #
-# Manual only for now: the rebuild path (buildkitd plus credential propagation)
-# is the least-charted part of this design, so it is proven against a throwaway
-# namespace before the schedule and the public namespace are switched on.
+# Proven first against a throwaway namespace — the rebuild path (buildkitd plus
+# credential propagation) is the least-charted part of this design — then switched
+# to the public namespace and a weekly schedule.
 
 on:
+  schedule:
+    - cron: "17 4 * * 1"     # Mondays, 04:17 UTC
   workflow_dispatch:
 
 permissions:
@@ -20,7 +22,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      NAMESPACE: canary  # flipped to the public namespace once this run is green
+      NAMESPACE: demo
     steps:
       - uses: actions/checkout@v5
 
@@ -115,6 +117,12 @@ jobs:
               "ghcr.io/${{ github.repository_owner }}/knock:${KNOCK_VERSION}" \
               reconcile "/knock/docs/examples/reference/$policy"
           done
+
+      - name: Push the bypass image (never through the front door)
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}/$NAMESPACE/bypass/busybox:1.37.0"
+          docker build -t "$ref" bypass/
+          docker push "$ref"
 
       - name: Install regctl and cosign
         run: |
