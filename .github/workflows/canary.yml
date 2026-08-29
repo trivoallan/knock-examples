@@ -139,10 +139,15 @@ jobs:
         # below says so — that flip is the signal the canary exists to catch.
         continue-on-error: true
         run: |
-          set -uo pipefail   # deliberately no -e: the exit code IS the result here
+          # GitHub Actions runs every `run:` block as `bash -e {0}`, so errexit is ON
+          # before this script starts and omitting `set -e` does not disable it.
+          # `set +e` is what actually turns it off, and it has to be here: the whole
+          # point of this step is that a non-zero exit is the RESULT, not a failure.
+          set -uo pipefail
+          set +e
           dir=knock/docs/examples/skills
           if [ ! -d "$dir" ]; then
-            echo "not on main yet — the skill example is still on its feature branch"
+            echo "no skill example at $dir on this checkout — nothing to reconcile"
             exit 0
           fi
           docker run --rm \
