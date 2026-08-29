@@ -115,3 +115,13 @@ jobs:
               "ghcr.io/${{ github.repository_owner }}/knock:${KNOCK_VERSION}" \
               reconcile "/knock/docs/examples/reference/$policy"
           done
+
+      - name: Install regctl and cosign
+        run: |
+          curl -sSfL "https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64" \
+            -o /usr/local/bin/regctl && chmod +x /usr/local/bin/regctl
+          curl -sSfL "https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64" \
+            -o /usr/local/bin/cosign && chmod +x /usr/local/bin/cosign
+
+      - name: Verify what was just published
+        run: ./verify.sh "${{ github.repository_owner }}" "$NAMESPACE"
