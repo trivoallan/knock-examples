@@ -1,0 +1,88 @@
+name: showcase
+
+# Runs the REAL example policies from the knock repository — checked out at the
+# pinned tag, never copied here — and publishes the results to GHCR, so anyone
+# can verify knock's provenance stamp without a clone or a cluster.
+#
+# Manual only for now: the rebuild path (buildkitd plus credential propagation)
+# is the least-charted part of this design, so it is proven against a throwaway
+# namespace before the schedule and the public namespace are switched on.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write        # the OIDC token cosign exchanges with Fulcio
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      NAMESPACE: canary  # flipped to the public namespace once this run is green
+    services:
+      buildkitd:
+        image: moby/buildkit:v0.18.2
+        options: --privileged
+        ports:
+          - 1234:1234
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load the pin
+        run: cat knock.env >> "$GITHUB_ENV"
+
+      - name: Check out the example policies at the pinned ref
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/knock
+          ref: v${{ env.KNOCK_VERSION }}
+          path: knock
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        # Both policies source docker.io, and anonymous pulls from the shared
+        # GitHub runner IPs are throttled hard — without this the showcase is red
+        # intermittently for a reason that has nothing to do with knock.
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Reconcile the example policies
+        # `reconcile` takes one directory, and the parent also holds debian-xz,
+        # which sources a fixture seeded into an in-cluster registry and is out of
+        # scope here — hence two invocations rather than one recursive walk.
+        #
+        # The docker config mount is load-bearing on the rebuild path: BuildKit
+        # pushes on its own behalf and reads the client's ~/.docker/config.json,
+        # so without it debian-tz builds and then fails to push.
+        run: |
+          set -euo pipefail
+          for policy in busybox debian-tz; do
+            echo "== reconciling $policy =="
+            docker run --rm \
+              -v "$PWD/knock:/knock:ro" \
+              -v "$HOME/.docker:/root/.docker:ro" \
+              --network host \
+              -e BUILDKIT_HOST=tcp://127.0.0.1:1234 \
+              -e KNOCK_REGISTRIES="$(jq -nc \
+                   --arg h "ghcr.io/${{ github.repository_owner }}/$NAMESPACE" \
+                   --arg u "${{ github.actor }}" \
+                   --arg p "${{ secrets.GITHUB_TOKEN }}" \
+                   '{ghcr: {host: $h, username: $u, password: $p}}')" \
+              -e KNOCK_SBOM_FORMATS='["spdx-json","cyclonedx-json"]' \
+              -e KNOCK_ATTEST_SIGNER=keyless \
+              -e KNOCK_LOG_FORMAT=json \
+              -e ACTIONS_ID_TOKEN_REQUEST_URL \
+              -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+              "ghcr.io/${{ github.repository_owner }}/knock:${KNOCK_VERSION}" \
+              reconcile "/knock/docs/examples/reference/$policy"
+          done
