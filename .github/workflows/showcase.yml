@@ -134,5 +134,30 @@ jobs:
           curl -sSfL "https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64" \
             -o /usr/local/bin/cosign && chmod +x /usr/local/bin/cosign
 
+      - name: DIAGNOSTIC — does BuildKit's SLSA provenance survive the push?
+        # knock passes --opt=attest:provenance=mode=max on the rebuild path, but no
+        # slsa.dev/provenance/v1 shows up in the referrer listing. Either BuildKit
+        # attaches it inside the image index (where `artifact list` would not look),
+        # or it does not survive a single-platform push and the flag is inert.
+        # Temporary: delete this step once the answer is recorded.
+        run: |
+          set -x
+          rebuilt="ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}/demo/debian:bookworm-slim-eu"
+          copied="ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}/demo/busybox:1.38.0"
+
+          echo "=== REBUILT: manifest as knock pushed it ==="
+          regctl manifest get "$rebuilt" --format '{{json .}}' | jq '{mediaType, artifactType, subject, annotations}'
+
+          echo "=== REBUILT: is it an index, and what is inside? ==="
+          regctl manifest get "$rebuilt" --format '{{json .}}' \
+            | jq '.manifests // "NOT AN INDEX — single manifest, so no attestation manifest slot"'
+
+          echo "=== REBUILT: referrer artifact types ==="
+          regctl artifact list "$rebuilt" --format '{{json .}}' | jq -r '.descriptors[]?.artifactType'
+
+          echo "=== COPIED (control — no rebuild, so no BuildKit provenance expected) ==="
+          regctl manifest get "$copied" --format '{{json .}}' \
+            | jq '.manifests // "NOT AN INDEX"'
+
       - name: Verify what was just published
         run: ./verify.sh "${{ github.repository_owner }}" "$NAMESPACE"
