@@ -93,6 +93,18 @@ knock cannot redden this page on its own. A nightly canary replays the same poli
 
 ## What is not here
 
+**The skill front door.** knock can place an external agent skill — a git repository fetched at an
+immutable commit, packaged into a byte-reproducible zip, stamped, and pushed as an OCI artifact a
+developer's client installs from. Every piece is built and tested, and there is a real example
+policy — [`skills/agent-skill.yml`](https://github.com/trivoallan/knock/blob/main/docs/examples/skills/agent-skill.yml),
+placing `mcp-builder` out of Anthropic's public skills repository.
+
+It is not in the table above because **nothing here can run it yet**: no CLI verb composes the
+intake pieces, so `knock reconcile` on a skill policy reports `failed` and exits 1 — and the pinned
+release in `knock.env` predates the work regardless. Adding it to the showcase loop today would
+redden this page every Monday and, worse, would have this page promise something the workflow does
+not do. It moves to *What runs here* when the verb ships and a release carries it, not before.
+
 No coverage report. `knock audit` enumerates through the OCI catalog API, which GHCR does not serve,
 so the bypass image above is a manual contrast rather than an automated blind-spot count. That is a
 GHCR limitation, not a knock one — against a catalog-capable registry, `knock audit --signed --sbom`
