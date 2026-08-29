@@ -114,7 +114,10 @@ jobs:
               -e KNOCK_ATTEST_SIGNER=keyless \
               -e KNOCK_ATTEST_FULCIO_URL=https://fulcio.sigstore.dev \
               -e KNOCK_ATTEST_REKOR_URL=https://rekor.sigstore.dev \
-              -e KNOCK_LOG_FORMAT=json \
+              # Text, not JSON: the only reader of these lines is a human scrolling the
+              # Actions log. Nothing here parses knock's output — verify.sh reads regctl,
+              # not this — so the structured form bought nothing and cost legibility.
+              -e KNOCK_LOG_FORMAT=text \
               -e ACTIONS_ID_TOKEN_REQUEST_URL \
               -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
               knock:canary \
@@ -159,7 +162,7 @@ jobs:
                  --arg u "${{ github.actor }}" \
                  --arg p "${{ secrets.GITHUB_TOKEN }}" \
                  '{ghcr: {host: $h, username: $u, password: $p}}')" \
-            -e KNOCK_LOG_FORMAT=json \
+            -e KNOCK_LOG_FORMAT=text \
             knock:canary \
             reconcile /knock/docs/examples/skills
           code=$?
