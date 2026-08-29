@@ -58,12 +58,15 @@ for image in "${IMAGES[@]}"; do
   #    Needs cosign v3: knock signs into a sigstore bundle
   #    (application/vnd.dev.sigstore.bundle.v0.3+json), which cosign v2 cannot read
   #    — it reports the attestation as absent rather than as unreadable.
-  if cosign verify-attestation \
+  # Capture rather than pipe: piping into `tail` would make the `if` test tail's
+  # exit status, which is always 0 — the check would silently always pass.
+  if out=$(cosign verify-attestation \
        --certificate-identity-regexp "^https://github.com/${OWNER}/knock-examples/\.github/workflows/" \
        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-       "$image" >/dev/null 2>&1; then
+       "$image" 2>&1); then
     good "signed, and the identity is this repository's workflow"
   else
+    printf '%s\n' "$out" | tail -6 | sed 's/^/    /'
     bad "no attestation verifiable against this repository's workflow identity"
   fi
 done
