@@ -60,7 +60,12 @@ for image in "${IMAGES[@]}"; do
   #    — it reports the attestation as absent rather than as unreadable.
   # Capture rather than pipe: piping into `tail` would make the `if` test tail's
   # exit status, which is always 0 — the check would silently always pass.
+  #    `--type` is required: without it cosign looks for the default `custom`
+  #    predicate and rejects, listing what it did find — which reads like a missing
+  #    signature but is the opposite. knock signs three predicates here: its own
+  #    transform provenance, and both SBOMs, so the inventories are signed too.
   if out=$(cosign verify-attestation \
+       --type https://knock.dev/predicate/transform/v1 \
        --certificate-identity-regexp "^https://github.com/${OWNER}/knock-examples/\.github/workflows/" \
        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
        "$image" 2>&1); then
