@@ -28,13 +28,14 @@ jobs:
         ports:
           - 1234:1234
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Load the pin
-        run: cat knock.env >> "$GITHUB_ENV"
+        # $GITHUB_ENV parses KEY=VALUE only, and knock.env is mostly comments.
+        run: grep -E '^[A-Z_]+=' knock.env >> "$GITHUB_ENV"
 
       - name: Check out the example policies at the pinned ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.repository_owner }}/knock
           ref: v${{ env.KNOCK_VERSION }}
