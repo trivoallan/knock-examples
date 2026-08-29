@@ -95,6 +95,9 @@ jobs:
         # client credentials. It must land on /tmp/.docker, not /root/.docker — the
         # runtime image runs as UID 65532 with HOME=/tmp (hardened for a read-only
         # root filesystem), so /root is not where anything looks.
+        # Text, not JSON: the only reader of these lines is a human scrolling the
+        # Actions log. Nothing here parses knock's output — verify.sh reads regctl,
+        # not this — so the structured form bought nothing and cost legibility.
         run: |
           set -euo pipefail
           for policy in busybox debian-tz; do
@@ -111,9 +114,6 @@ jobs:
                    '{ghcr: {host: $h, username: $u, password: $p}}')" \
               -e KNOCK_SBOM_FORMATS='["spdx-json","cyclonedx-json"]' \
               -e KNOCK_ATTEST_SIGNER=keyless \
-              # Text, not JSON: the only reader of these lines is a human scrolling the
-              # Actions log. Nothing here parses knock's output — verify.sh reads regctl,
-              # not this — so the structured form bought nothing and cost legibility.
               -e KNOCK_LOG_FORMAT=text \
               -e ACTIONS_ID_TOKEN_REQUEST_URL \
               -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
