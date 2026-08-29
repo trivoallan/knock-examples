@@ -1,0 +1,213 @@
+name: reconcile
+
+# The one workflow. It reconciles the REAL example policies from the knock
+# repository — checked out there, never copied here — and publishes the results to
+# GHCR, so anyone can verify knock's provenance stamp without a clone or a cluster.
+#
+# It runs knock's `main` by default. That is a deliberate reversal of the old
+# pinned-tag showcase: the pin meant the page could only ever show what a release
+# carried, so the `skills` example it documents had never once run here. The cost is
+# named rather than hidden — a regression on knock's main reddens this page.
+#
+# `version` replays a released tag instead. Note that `reconcile` converges on
+# CONTENT, not on the stamp: replaying an old version leaves an old stamp that the
+# next scheduled run will NOT repair (identical content → skipped). Pass a
+# `namespace` when replaying, so the public showcase is left alone.
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "knock release tag to replay (e.g. 0.9.3). Empty: build from main."
+        default: ""
+      namespace:
+        description: "GHCR sub-namespace. Empty: the public showcase. Set it when replaying a version."
+        default: ""
+      folders:
+        description: "Space-separated example directories, relative to docs/examples."
+        default: "reference/busybox reference/debian-tz skills redis retention pending-deletion brownfield"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write        # the OIDC token cosign exchanges with Fulcio
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      # `inputs` is null on a schedule event, so every input arrives empty there.
+      # That is the whole trick: the scheduled behaviour IS the default, with no
+      # switch on the cron string — which would turn a schedule into a semantic key
+      # and change the mode silently the day someone moves the hour.
+      NAMESPACE: ${{ inputs.namespace }}
+      FOLDERS: ${{ inputs.folders || 'reference/busybox reference/debian-tz skills redis retention pending-deletion brownfield' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve the knock ref and image
+        # The single conditional axis of this workflow. Everything downstream reads
+        # $KNOCK_IMAGE and does not care which branch produced it.
+        run: |
+          set -euo pipefail
+          if [ -z "${VERSION}" ]; then
+            echo "KNOCK_REF=main"      >> "$GITHUB_ENV"
+            echo "KNOCK_IMAGE=knock:ci" >> "$GITHUB_ENV"
+            echo "building knock from main"
+          else
+            echo "KNOCK_REF=v${VERSION}" >> "$GITHUB_ENV"
+            echo "KNOCK_IMAGE=ghcr.io/${{ github.repository_owner }}/knock:${VERSION}" >> "$GITHUB_ENV"
+            echo "replaying knock ${VERSION}"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        # Every copy-path policy sources docker.io, and anonymous pulls from the
+        # shared GitHub runner IPs are throttled hard — without this the page is red
+        # intermittently for a reason that has nothing to do with knock.
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Check out the example policies
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/knock
+          ref: ${{ env.KNOCK_REF }}
+          path: knock
+
+      - name: Build knock from main
+        # knock publishes its image only on release, so there is no :main tag to
+        # pull — running code that has no release yet is the point of the default.
+        if: env.VERSION == ''
+        run: docker build -t knock:ci knock/
+
+      - name: Pull the pinned knock
+        # Explicit rather than left to `docker run`: a bad tag fails here, with the
+        # registry's own error, instead of half way through the reconcile loop.
+        if: env.VERSION != ''
+        run: docker pull "$KNOCK_IMAGE"
+
+      - name: Start buildkitd
+        # Not a service container: buildkitd listens on a unix socket unless told
+        # otherwise, and a service container has no way to pass `--addr`. Started
+        # here so the flag can be given, then waited for — buildctl's failure mode
+        # against a not-yet-listening daemon is an opaque "error reading server
+        # preface: connection reset by peer".
+        run: |
+          docker run -d --name buildkitd --privileged -p 1234:1234 \
+            moby/buildkit:v0.18.2 --addr tcp://0.0.0.0:1234
+          # Probe the port directly with bash's /dev/tcp. Probing with a buildctl
+          # container is a trap: moby/buildkit's ENTRYPOINT is buildkitd, so
+          # `docker run moby/buildkit buildctl ...` starts a second daemon that
+          # never exits and the wait loop hangs instead of polling.
+          for _ in $(seq 30); do
+            if timeout 1 bash -c '</dev/tcp/127.0.0.1/1234' 2>/dev/null; then
+              echo "buildkitd is listening"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "buildkitd never came up" >&2
+          docker logs buildkitd >&2
+          exit 1
+
+      # No KNOCK_ATTEST_FULCIO_URL / _REKOR_URL, deliberately. They used to be set
+      # explicitly to work around knock #252, where a blank value emitted no caUrls
+      # and cosign v3 refused to sign. Since 0.9.3 a blank value resolves to the
+      # public Sigstore instance for the keyless signer, and this run is the proof of
+      # that in real conditions rather than in a unit test.
+      - name: Reconcile the example policies
+        # NOT `set -e`. The loop must attempt every folder: with errexit a red
+        # `debian-tz` meant `skills`, `redis` and the rest were never even tried, so
+        # one failure hid all the others. Failures are collected and re-raised at the
+        # end instead, one `::error::` annotation each, each folder in its own group.
+        #
+        # The docker config mount is load-bearing on BOTH paths: regctl reads it to
+        # authenticate to GHCR, and BuildKit pushes on its own behalf using the same
+        # client credentials. It must land on /tmp/.docker, not /root/.docker — the
+        # runtime image runs as UID 65532 with HOME=/tmp (hardened for a read-only
+        # root filesystem), so /root is not where anything looks.
+        #
+        # Text, not JSON: the only reader of these lines is a human scrolling the
+        # Actions log. Nothing here parses knock's output — verify.sh reads regctl,
+        # not this — so the structured form bought nothing and cost legibility.
+        run: |
+          set -uo pipefail
+          registries=$(jq -nc \
+            --arg h "ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}" \
+            --arg u "${{ github.actor }}" \
+            --arg p "${{ secrets.GITHUB_TOKEN }}" \
+            '{ghcr: {host: $h, username: $u, password: $p}}')
+          fail=0
+          for folder in $FOLDERS; do
+            echo "::group::$folder"
+            docker run --rm \
+              -v "$PWD/knock:/knock:ro" \
+              -v "$HOME/.docker:/tmp/.docker:ro" \
+              --network host \
+              -e BUILDKIT_HOST=tcp://127.0.0.1:1234 \
+              -e KNOCK_REGISTRIES="$registries" \
+              -e KNOCK_SBOM_FORMATS='["spdx-json","cyclonedx-json"]' \
+              -e KNOCK_ATTEST_SIGNER=keyless \
+              -e KNOCK_LOG_FORMAT=text \
+              -e ACTIONS_ID_TOKEN_REQUEST_URL \
+              -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+              "$KNOCK_IMAGE" \
+              reconcile "/knock/docs/examples/$folder" \
+              || { echo "::error title=$folder::reconcile failed"; fail=1; }
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: Re-reconcile the skill policy — it must be a no-op
+        # The convergence claim, checked against a real registry rather than a fake:
+        # an unchanged upstream must transfer nothing on the second run. Asserted on
+        # the counters, because a run that silently re-pushed would still exit 0.
+        run: |
+          set -uo pipefail
+          case " $FOLDERS " in
+            *" skills "*) ;;
+            *) echo "skills not in this run's folders — nothing to re-check"; exit 0 ;;
+          esac
+          set -e
+          docker run --rm \
+            -v "$PWD/knock:/knock:ro" \
+            -v "$HOME/.docker:/tmp/.docker:ro" \
+            --network host \
+            -e KNOCK_REGISTRIES="$(jq -nc \
+                 --arg h "ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}" \
+                 --arg u "${{ github.actor }}" \
+                 --arg p "${{ secrets.GITHUB_TOKEN }}" \
+                 '{ghcr: {host: $h, username: $u, password: $p}}')" \
+            -e KNOCK_LOG_FORMAT=text \
+            "$KNOCK_IMAGE" \
+            reconcile /knock/docs/examples/skills --report-json > /tmp/second.json
+          jq -e '.policies[0].totals | .skipped == 1 and .imported == 0' /tmp/second.json \
+            || { echo "::error::second run was not a no-op"; jq . /tmp/second.json; exit 1; }
+
+      - name: Push the bypass image (never through the front door)
+        run: |
+          ref="ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}/bypass/busybox:1.37.0"
+          docker build -t "$ref" bypass/
+          docker push "$ref"
+
+      - name: Install regctl and cosign
+        run: |
+          curl -sSfL "https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64" \
+            -o /usr/local/bin/regctl && chmod +x /usr/local/bin/regctl
+          curl -sSfL "https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64" \
+            -o /usr/local/bin/cosign && chmod +x /usr/local/bin/cosign
+
+      - name: Verify what was just published
+        run: ./verify.sh "${{ github.repository_owner }}" "$NAMESPACE"
