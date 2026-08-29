@@ -1,0 +1,90 @@
+name: spike
+
+# Throwaway. Answers the two questions that gate what this repository's README
+# may promise, before any of it is written:
+#
+#   1. Does GHCR serve the OCI referrers API? knock attaches SBOMs with
+#      `regctl artifact put --subject`; regctl falls back to a tag scheme when a
+#      registry has no referrers API. Both work, but only one lets the README
+#      show a clean verification command.
+#   2. Does GHCR serve the OCI catalog API (`/v2/_catalog`)? `knock audit`, `gc`
+#      and `purge` enumerate through it. If it is absent, a published coverage
+#      report cannot run here — which is the assumption the design already makes,
+#      and this turns it into an observation.
+#
+# Runs as a workflow rather than locally so GITHUB_TOKEN provides GHCR access and
+# no personal access token is handled by anyone. Delete this workflow, and the
+# packages it creates, once the answers are recorded.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    env:
+      NS: ghcr.io/${{ github.repository_owner }}/spike
+    steps:
+      - name: Install regctl
+        run: |
+          curl -sSfL "https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64" \
+            -o /usr/local/bin/regctl
+          chmod +x /usr/local/bin/regctl
+          regctl version
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | regctl registry login ghcr.io --user "${{ github.actor }}" --pass-stdin
+
+      - name: Place a throwaway image
+        # zot is small, public, and already an OCI-native image — no Docker Hub
+        # involved, so this step cannot fail on rate limits.
+        run: regctl image copy ghcr.io/project-zot/zot-linux-amd64:v2.1.17 "$NS/zot:v1"
+
+      - name: Attach a referrer
+        run: |
+          echo '{"spike": true}' > /tmp/spike.json
+          regctl artifact put --subject "$NS/zot:v1" \
+            --artifact-type application/vnd.knock.spike \
+            --file /tmp/spike.json --file-media-type application/json
+
+      - name: QUESTION 1 — read the referrer back
+        run: |
+          echo "== artifact list =="
+          regctl artifact list "$NS/zot:v1" --format '{{json .}}'
+
+      - name: QUESTION 1 — which mechanism served it
+        # A `sha256-<digest>` tag alongside v1 means regctl fell back to the tag
+        # scheme, i.e. GHCR does NOT implement the referrers API. Only `v1` means
+        # the referrers API answered.
+        run: |
+          echo "== tag ls =="
+          regctl tag ls "$NS/zot"
+          echo
+          if regctl tag ls "$NS/zot" | grep -q '^sha256-'; then
+            echo "VERDICT Q1: FALLBACK TAG SCHEME — GHCR does not serve the referrers API"
+          else
+            echo "VERDICT Q1: REFERRERS API — GHCR serves it natively"
+          fi
+
+      - name: QUESTION 2 — the catalog API
+        # Expected to fail or come back empty: GHCR is not known to implement
+        # /v2/_catalog. An error here is a RESULT, not a broken step.
+        run: |
+          echo "== repo ls =="
+          if out=$(regctl repo ls ghcr.io 2>&1); then
+            if [ -z "$out" ]; then
+              echo "VERDICT Q2: EMPTY — catalog answered but listed nothing"
+            else
+              echo "$out" | head -20
+              echo "VERDICT Q2: CATALOG SERVED — this reopens the deferred coverage decision"
+            fi
+          else
+            echo "$out" | head -5
+            echo "VERDICT Q2: NO CATALOG — audit/gc/purge cannot enumerate here, as assumed"
+          fi
