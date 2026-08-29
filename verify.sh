@@ -55,6 +55,9 @@ for image in "${IMAGES[@]}"; do
 
   # 3. the signature — the identity IS the workflow that produced it, so a visitor
   #    trusts a GitHub Actions run rather than trusting us.
+  #    Needs cosign v3: knock signs into a sigstore bundle
+  #    (application/vnd.dev.sigstore.bundle.v0.3+json), which cosign v2 cannot read
+  #    — it reports the attestation as absent rather than as unreadable.
   if cosign verify-attestation \
        --certificate-identity-regexp "^https://github.com/${OWNER}/knock-examples/\.github/workflows/" \
        --certificate-oidc-issuer https://token.actions.githubusercontent.com \

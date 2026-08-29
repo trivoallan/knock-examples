@@ -120,7 +120,7 @@ jobs:
         run: |
           curl -sSfL "https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64" \
             -o /usr/local/bin/regctl && chmod +x /usr/local/bin/regctl
-          curl -sSfL "https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64" \
+          curl -sSfL "https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-linux-amd64" \
             -o /usr/local/bin/cosign && chmod +x /usr/local/bin/cosign
 
       - name: Verify what was just published
