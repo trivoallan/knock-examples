@@ -124,35 +124,23 @@ jobs:
               reconcile "/knock/docs/examples/reference/$policy"
           done
 
-      - name: Reconcile the skill policy (expected red until the verb lands)
-        # The one place this can run at all. The showcase pins a released tag, so it
-        # can never exercise unreleased work; this workflow builds from `main`, which
-        # is exactly what the skill front door needs — no release carries it yet.
+      - name: Reconcile the skill policy
+        # The one place this can run at all: the showcase pins a released tag in
+        # knock.env, so it can never exercise unreleased work, while this workflow
+        # builds knock from `main`. It moves to the showcase when a release carries
+        # the git-source path.
         #
-        # Its own step, not the loop above: that loop hardcodes the
-        # `docs/examples/reference/` prefix, and the skill example lives under
+        # Its own step rather than the loop above, which hardcodes the
+        # `docs/examples/reference/` prefix while the skill example lives under
         # `docs/examples/skills/`.
         #
-        # `continue-on-error` and the explicit exit-code read are the point of this
-        # step, not a workaround. Today reconcile filters git-sourced policies out
-        # before the plan phase and reports each `UnsupportedSourceError`, so exit 1
-        # is the CORRECT answer and a green here would mean something had silently
-        # started doing nothing. ADR 0048 lists "the reconcile merge" as deferred
-        # work, so the day it lands this step turns 0 on its own and the message
-        # below says so — that flip is the signal the canary exists to catch.
-        continue-on-error: true
+        # An ordinary reconcile now — no `continue-on-error`, no exit-code reading.
+        # Until knock#265 merged, exit 1 was the CORRECT answer here (reconcile
+        # filtered git-sourced policies out before the plan phase) and this step
+        # recorded it without failing. That inversion is the whole point: a red here
+        # now means the front door broke, not that it was never built.
         run: |
-          # GitHub Actions runs every `run:` block as `bash -e {0}`, so errexit is ON
-          # before this script starts and omitting `set -e` does not disable it.
-          # `set +e` is what actually turns it off, and it has to be here: the whole
-          # point of this step is that a non-zero exit is the RESULT, not a failure.
-          set -uo pipefail
-          set +e
-          dir=knock/docs/examples/skills
-          if [ ! -d "$dir" ]; then
-            echo "no skill example at $dir on this checkout — nothing to reconcile"
-            exit 0
-          fi
+          set -euo pipefail
           docker run --rm \
             -v "$PWD/knock:/knock:ro" \
             -v "$HOME/.docker:/tmp/.docker:ro" \
@@ -165,12 +153,27 @@ jobs:
             -e KNOCK_LOG_FORMAT=text \
             knock:canary \
             reconcile /knock/docs/examples/skills
-          code=$?
-          case "$code" in
-            0) echo "::notice::the skill front door is live — reconcile handled a git-sourced policy" ;;
-            1) echo "expected: reconcile reports git-sourced policies as failed (ADR 0048)" ;;
-            *) echo "::warning::unexpected exit $code — not the UnsupportedSourceError this expects" ;;
-          esac
+
+      - name: Re-reconcile the skill policy — it must be a no-op
+        # The convergence claim, checked against a real registry rather than a fake:
+        # an unchanged upstream must transfer nothing on the second run. Asserted on
+        # the counters, because a run that silently re-pushed would still exit 0.
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/knock:/knock:ro" \
+            -v "$HOME/.docker:/tmp/.docker:ro" \
+            --network host \
+            -e KNOCK_REGISTRIES="$(jq -nc \
+                 --arg h "ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}" \
+                 --arg u "${{ github.actor }}" \
+                 --arg p "${{ secrets.GITHUB_TOKEN }}" \
+                 '{ghcr: {host: $h, username: $u, password: $p}}')" \
+            -e KNOCK_LOG_FORMAT=text \
+            knock:canary \
+            reconcile /knock/docs/examples/skills --report-json > /tmp/second.json
+          jq -e '.policies[0].totals | .skipped == 1 and .imported == 0' /tmp/second.json \
+            || { echo "::error::second run was not a no-op"; jq . /tmp/second.json; exit 1; }
 
       - name: Push the bypass image (never through the front door)
         run: |

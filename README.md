@@ -86,29 +86,20 @@ blind spots.
 |---|---|---|
 | [`reference/busybox`](https://github.com/trivoallan/knock/blob/main/docs/examples/reference/busybox/busybox.yml) | copy | semver tag selection, derived moving aliases |
 | [`reference/debian-tz`](https://github.com/trivoallan/knock/blob/main/docs/examples/reference/debian-tz/debian-tz.yml) | rebuild | one source tag fanned into two regional variants, `io.knock.transform.*` lineage |
+| [`skills/agent-skill`](https://github.com/trivoallan/knock/blob/main/docs/examples/skills/agent-skill.yml) | git intake | a git repository placed as an OCI artifact under an immutable `sha-<revision>` tag plus a moving alias — **canary only**, see below |
+
+**The skill row runs in the canary, not here.** The showcase pins a released knock in
+[`knock.env`](knock.env), and the git-source path is newer than that pin; the nightly canary builds
+from `main`, so it is the only place the front door can run at all. It joins this page's own run
+when a release carries it. The canary reconciles the policy twice on purpose: the second run must
+report `skipped=1, imported=0`, because a scheduled run over an unchanged upstream that quietly
+re-pushed would still exit 0.
 
 The knock version is pinned in [`knock.env`](knock.env) and bumped deliberately, so a regression in
 knock cannot redden this page on its own. A nightly canary replays the same policies against knock's
 `main` into a throwaway namespace, so a regression shows up there first.
 
 ## What is not here
-
-**The skill front door.** knock can place an external agent skill — a git repository fetched at an
-immutable commit, packaged into a byte-reproducible zip, stamped, and pushed as an OCI artifact a
-developer's client installs from. Every piece is built and tested, and there is a real example
-policy — [`skills/agent-skill.yml`](https://github.com/trivoallan/knock/blob/main/docs/examples/skills/agent-skill.yml),
-placing `mcp-builder` out of Anthropic's public skills repository.
-
-It is not in the table above because **the showcase cannot run it**: no CLI verb composes the intake
-pieces, so `knock reconcile` on a skill policy reports `failed` and exits 1, and the release pinned
-in `knock.env` predates the work regardless. Wiring it into the showcase loop would redden this page
-every Monday and, worse, would have this page promise something the workflow does not produce.
-
-**The nightly canary does run it**, which is the one place it can be run at all: that workflow builds
-knock from `main` rather than a release, so it reaches unreleased work by construction. There, exit 1
-is the *correct* answer today — ADR 0048 lists the reconcile merge as deferred — and the step records
-it without failing the run. The day that exit code turns 0, the front door is live and the canary
-says so. That flip is the signal; it is also when this paragraph moves up into the table.
 
 No coverage report. `knock audit` enumerates through the OCI catalog API, which GHCR does not serve,
 so the bypass image above is a manual contrast rather than an automated blind-spot count. That is a
