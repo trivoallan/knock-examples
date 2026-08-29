@@ -121,6 +121,49 @@ jobs:
               reconcile "/knock/docs/examples/reference/$policy"
           done
 
+      - name: Reconcile the skill policy (expected red until the verb lands)
+        # The one place this can run at all. The showcase pins a released tag, so it
+        # can never exercise unreleased work; this workflow builds from `main`, which
+        # is exactly what the skill front door needs — no release carries it yet.
+        #
+        # Its own step, not the loop above: that loop hardcodes the
+        # `docs/examples/reference/` prefix, and the skill example lives under
+        # `docs/examples/skills/`.
+        #
+        # `continue-on-error` and the explicit exit-code read are the point of this
+        # step, not a workaround. Today reconcile filters git-sourced policies out
+        # before the plan phase and reports each `UnsupportedSourceError`, so exit 1
+        # is the CORRECT answer and a green here would mean something had silently
+        # started doing nothing. ADR 0048 lists "the reconcile merge" as deferred
+        # work, so the day it lands this step turns 0 on its own and the message
+        # below says so — that flip is the signal the canary exists to catch.
+        continue-on-error: true
+        run: |
+          set -uo pipefail   # deliberately no -e: the exit code IS the result here
+          dir=knock/docs/examples/skills
+          if [ ! -d "$dir" ]; then
+            echo "not on main yet — the skill example is still on its feature branch"
+            exit 0
+          fi
+          docker run --rm \
+            -v "$PWD/knock:/knock:ro" \
+            -v "$HOME/.docker:/tmp/.docker:ro" \
+            --network host \
+            -e KNOCK_REGISTRIES="$(jq -nc \
+                 --arg h "ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}" \
+                 --arg u "${{ github.actor }}" \
+                 --arg p "${{ secrets.GITHUB_TOKEN }}" \
+                 '{ghcr: {host: $h, username: $u, password: $p}}')" \
+            -e KNOCK_LOG_FORMAT=json \
+            knock:canary \
+            reconcile /knock/docs/examples/skills
+          code=$?
+          case "$code" in
+            0) echo "::notice::the skill front door is live — reconcile handled a git-sourced policy" ;;
+            1) echo "expected: reconcile reports git-sourced policies as failed (ADR 0048)" ;;
+            *) echo "::warning::unexpected exit $code — not the UnsupportedSourceError this expects" ;;
+          esac
+
       - name: Push the bypass image (never through the front door)
         run: |
           ref="ghcr.io/${{ github.repository_owner }}${NAMESPACE:+/$NAMESPACE}/bypass/busybox:1.37.0"
