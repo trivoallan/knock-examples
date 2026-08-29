@@ -80,12 +80,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # The two sigstore URLs are set explicitly rather than left blank. knock's
-      # published reference says a blank KNOCK_ATTEST_FULCIO_URL means "public
-      # Fulcio", but `build_signing_config` emits no caUrls at all when it is
-      # blank, and cosign v3 then refuses: "no fulcio URLs provided in signing
-      # config". Naming them is also the better choice for a public showcase — a
-      # visitor can see exactly which trust roots produced the signature.
+      # No KNOCK_ATTEST_FULCIO_URL / _REKOR_URL here, deliberately. They used to be
+      # set explicitly to work around knock #252, where a blank value emitted no
+      # caUrls and cosign v3 refused to sign. Since 0.9.3 a blank value resolves to
+      # the public Sigstore instance for the keyless signer, and this run is the
+      # proof of that in real conditions rather than in a unit test.
       - name: Reconcile the example policies
         # `reconcile` takes one directory, and the parent also holds debian-xz,
         # which sources a fixture seeded into an in-cluster registry and is out of
@@ -112,8 +111,6 @@ jobs:
                    '{ghcr: {host: $h, username: $u, password: $p}}')" \
               -e KNOCK_SBOM_FORMATS='["spdx-json","cyclonedx-json"]' \
               -e KNOCK_ATTEST_SIGNER=keyless \
-              -e KNOCK_ATTEST_FULCIO_URL=https://fulcio.sigstore.dev \
-              -e KNOCK_ATTEST_REKOR_URL=https://rekor.sigstore.dev \
               -e KNOCK_LOG_FORMAT=json \
               -e ACTIONS_ID_TOKEN_REQUEST_URL \
               -e ACTIONS_ID_TOKEN_REQUEST_TOKEN \
