@@ -62,16 +62,18 @@ jobs:
         # which sources a fixture seeded into an in-cluster registry and is out of
         # scope here — hence two invocations rather than one recursive walk.
         #
-        # The docker config mount is load-bearing on the rebuild path: BuildKit
-        # pushes on its own behalf and reads the client's ~/.docker/config.json,
-        # so without it debian-tz builds and then fails to push.
+        # The docker config mount is load-bearing on BOTH paths: regctl reads it to
+        # authenticate to GHCR, and BuildKit pushes on its own behalf using the same
+        # client credentials. It must land on /tmp/.docker, not /root/.docker — the
+        # runtime image runs as UID 65532 with HOME=/tmp (hardened for a read-only
+        # root filesystem), so /root is not where anything looks.
         run: |
           set -euo pipefail
           for policy in busybox debian-tz; do
             echo "== reconciling $policy =="
             docker run --rm \
               -v "$PWD/knock:/knock:ro" \
-              -v "$HOME/.docker:/root/.docker:ro" \
+              -v "$HOME/.docker:/tmp/.docker:ro" \
               --network host \
               -e BUILDKIT_HOST=tcp://127.0.0.1:1234 \
               -e KNOCK_REGISTRIES="$(jq -nc \
